@@ -41,11 +41,15 @@ void add_sock_to_epoll(int epoll_fd, int sock_fd){
 }
 
 int main(){
+    string IP_addr;
+    cout<<"Enter the IP address of the server: ";
+    cin>>IP_addr;
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
 
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server_addr.sin_addr.s_addr = inet_addr(IP_addr.c_str());
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
 
@@ -54,7 +58,10 @@ int main(){
         exit(1);
     }
 
+    cout<<"Connected to the server from port "<<PORT<<endl;
+
     enter_raw_mode();
+    cout<<"[client] terminal in raw mode. Press Ctrl-Q to quit.\n";
 
     int epoll_fd=epoll_create1(0);
     struct epoll_event ev[MAX_EVENTS];  

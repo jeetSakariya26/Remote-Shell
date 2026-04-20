@@ -122,9 +122,9 @@ void add_sock_to_epoll(int epoll_fd, int sock_fd){
 }
 
 
-bool command_is_valid(string command){
+// bool command_is_valid(string command){
     
-}
+// }
 
 int main(){
     int sock;
@@ -164,6 +164,10 @@ int main(){
                 set_nonblocking(client_sock);
                 int ptyMaster = create_pty(client_sock);
 
+                char client_ip_addr[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET,&client_sock,client_ip_addr,sizeof(client_ip_addr));
+
+                cout<<"[server] New connection from "<<client_ip_addr<<endl;
 
                 if (ptyMaster < 0) {          
                     close(client_sock); 
@@ -181,6 +185,12 @@ int main(){
                 char buf[1024];
                 int n=read(fd,buf,sizeof(buf));
                 if(n <= 0){
+
+                    char client_ip_addr[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET,&fd,client_ip_addr,sizeof(client_ip_addr));
+
+                    cout<<"[server] New connection from "<<client_ip_addr<<endl;
+
                     cleanup_connection(epoll_fd,fd);
                     continue;
                 }
