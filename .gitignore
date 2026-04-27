@@ -1,2 +1,11 @@
-client
-server
+# 1. Ignore everything in the repository
+*
+
+# 2. Un-ignore all directories (so Git can actually look inside them to find your .cpp files)
+!*/
+
+# 3. Un-ignore all .cpp files
+!*.cpp
+
+# 4. (Optional) Un-ignore the .gitignore file itself so you can track it
+!.gitignore
