@@ -8,110 +8,148 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/wait.h>
-#include <arpa/inet.h>
 #include <bits/stdc++.h>
+#include <arpa/inet.h>
+#include "helper.h"
+#include "packet.h"
 using namespace std;
 
 #define PORT 9090
+#define BUFFER_SIZE 4096
 #define MAX_EVENTS 2
-#define BUFFER_SIZE 1024
 
-static struct termios saved_termios;
-void enter_raw_mode() {
-    tcgetattr(STDIN_FILENO, &saved_termios);
-    struct termios raw = saved_termios;
-
-    // cfmakeraw() sets: ~ECHO ~ICANON ~ISIG ~IEXTEN ~IXON ~ICRNL
-    //                   ~OPOST  CS8  VMIN=1 VTIME=0
-    cfmakeraw(&raw);
-
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    std::cerr << "[client] Entered raw mode. Press Ctrl-Q to quit.\n";
-}
-
-void restore_terminal() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_termios);
-    std::cerr << "\n[client] Terminal restored.\n";
-}
-void add_sock_to_epoll(int epoll_fd, int sock_fd){
-    struct epoll_event ev;
-    ev.events=EPOLLIN;
-    ev.data.fd=sock_fd;
-    epoll_ctl(epoll_fd,EPOLL_CTL_ADD,sock_fd,&ev);
-}
-
-int main(){
-    string IP_addr;
-    cout<<"Enter the IP address of the server: ";
-    cin>>IP_addr;
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-
-    server_addr.sin_addr.s_addr = inet_addr(IP_addr.c_str());
+string authentication(int &sock,string username,string key,string ip){
+    if((sock = socket(AF_INET,SOCK_STREAM,0)) < 0){
+        perror("socket");
+        exit(1);
+    }
+    
+    struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
-
-    if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+    
+    if(inet_pton(AF_INET,ip.c_str(),&server_addr.sin_addr) <= 0){
+        perror("Invalid IP");
+        exit(1);
+    }
+    
+    if(connect(sock,(sockaddr*)&server_addr,sizeof(server_addr)) < 0){
         perror("connect");
         exit(1);
     }
+    
+    cout<<"Sending authentication request..."<<endl;
+    string message = message_of_login(key,username);
+    send_All(sock, message);
+    cout<<"authenticating..."<<endl;
+    
+    // get only one response
+    char response[BUFFER_SIZE];
+    int n=recv(sock,response,BUFFER_SIZE,0);
+    if (n <= 0) {
+        cout << "Connection closed or error\n";
+        string n_key;
+        cout<<"Enter new key: ";
+        cin>>n_key;
+        return authentication(sock,username,n_key,ip);
+    }
+    string res(response,n);
+    auto [type,payload] = decode_message(res);
+    if(type == 6){
+        cout<<"Authentication successful"<<endl;
+        return decode_ack(payload);
+    }else{
+        cout<<"Authentication failed"<<endl;
+        string n_key;
+        cout<<"Enter new key: ";
+        cin>>n_key;
+        return authentication(sock,username,n_key,ip);
+    }
+    return "";
+}
 
-    cout<<"Connected to the server from port "<<PORT<<endl;
-
+int main(){
+    string username;
+    string key;
+    string ip;
+    cout<<"Enter username : ";cin>>username;
+    cout<<"Enter key      : ";cin>>key;
+    cout<<"Enter IP       : ";cin>>ip;
+    int sock;
+    string token = authentication(sock,username,key,ip);
+    write(STDOUT_FILENO, "\033[?1049h\033[H\033[2J", 14);
     enter_raw_mode();
-    cout<<"[client] terminal in raw mode. Press Ctrl-Q to quit.\n";
-
-    int epoll_fd=epoll_create1(0);
-    struct epoll_event ev[MAX_EVENTS];  
+    string welcome_msg = "[client] connected — raw terminal active (Ctrl-Q to quit)\r\n";
+    write(STDOUT_FILENO, welcome_msg.c_str(), welcome_msg.size());
     
-    add_sock_to_epoll(epoll_fd, STDIN_FILENO);
+    
+    int epoll_fd = epoll_create1(0);
+    epoll_event ev[MAX_EVENTS];
     add_sock_to_epoll(epoll_fd, sock);
-    
-    bool status=true;
+    add_sock_to_epoll(epoll_fd, STDIN_FILENO);
+    string buffer;
 
-    while(status){
-        int num_events = epoll_wait(epoll_fd, ev, MAX_EVENTS, -1);
-        for (int i = 0; i < num_events; i++) {
-            int fd=ev[i].data.fd;
-        
-            // checking fd is socket or stdin
-            if (fd == sock) {
-                char buffer[BUFFER_SIZE];
-                int n=read(fd, buffer, sizeof(buffer));
+    while(true){
+        int events = epoll_wait(epoll_fd, ev, MAX_EVENTS, -1);
+        for(int i=0;i<events;i++){
+            int socket_fd = ev[i].data.fd;
 
-                if(n <= 0){
-                    status=false;
-                    break;
+            if(socket_fd == sock){
+                char response[BUFFER_SIZE];
+                int n=recv(sock,response,BUFFER_SIZE,0);
+
+                if( n <= 0){
+                    write(STDOUT_FILENO, "\033[?1049l", 8);
+                    close_raw_mode();    
+                    close(sock);
+                    close(epoll_fd);
+                    cout<<"[client] disconnected\n";
+                    exit(1);
                 }
-
-                write(STDOUT_FILENO, buffer, n);
-
-            } else if (fd == STDIN_FILENO) {
-                char buffer[BUFFER_SIZE];
-                int n=read(fd, buffer, sizeof(buffer));
-
-                if(n <= 0){
-                    status=false;
-                    break;
-                }
-
-                for(int j = 0; j < n; j++) {
-                    if (buffer[j] == '\x11') {
-                        status=false;
-                        break;
+                buffer.append(response,n);
+                while(check_decode_message(buffer)){
+                    auto [type,payload] = decode_message(buffer);
+                    if(type == 1){
+                        write(STDOUT_FILENO, "\033[?1049l", 8);
+                        close_raw_mode();
+                        close(sock);
+                        close(epoll_fd);
+                        cout<<"[client] disconnected\n";
+                        exit(0);
+                    }else if(type == 2){
+                        auto [token,data] = decode_data(payload);
+                        ssize_t wr_data = 0;
+                        while(wr_data < data.size()){
+                            int w= write(STDOUT_FILENO,data.c_str()+wr_data,data.size()-wr_data);
+                            wr_data+=w;
+                        }
                     }
                 }
-
-                write(sock, buffer, n);
+            }else if(socket_fd == STDIN_FILENO){
+                char input[BUFFER_SIZE];
+                int n=read(STDIN_FILENO,input,BUFFER_SIZE);
+                if(n <= 0) continue;
+                for(int i=0;i<n;i++){
+                    if(input[i] == 0x11){
+                        string message = message_of_logout("user wants to logout");
+                        send_All(sock,message);
+                        cout<<"[client] disconnected\n";
+                        write(STDOUT_FILENO, "\033[?1049l", 8);
+                        close_raw_mode();
+                        close(sock);
+                        close(epoll_fd);
+                        exit(0);
+                    }
+                }
+                string msg(input,n);
+                string message = message_of_data(token,msg);
+                send_All(sock,message);
             }
         }
     }
-
-    restore_terminal();
+    write(STDOUT_FILENO, "\033[?1049l", 8);
+    close_raw_mode();
     close(sock);
     close(epoll_fd);
-
     return 0;
 }
