@@ -14,8 +14,16 @@ using namespace std;
 // 0 : login
 // 1 : logout
 // 2 : msg transfer
+// 3 : share window size
+// 4 : file transfer
+// 5 : file ack
 // 6 : ack
 // 7 : error
+
+struct WindowSize{
+    unsigned short width;
+    unsigned short height;
+};
 
 // made an message with [4 bytes total length] [1 byte for type] [message]
 string make_message(int type,string message);
@@ -49,6 +57,14 @@ string decode_ack(string& message);
 // [1 byte error length] [error]
 string message_of_error(string error);
 string decode_error(string& message);
+
+// window size packet
+// type 3
+// [1 byte token length] [token] [2 byte width] [2 byte height]
+string message_of_window_size(string token, unsigned short width, unsigned short height);
+pair<string,WindowSize> decode_window_size(string& message);
+
+
 
 // decode message
 pair<int ,string > decode_message(string& message);

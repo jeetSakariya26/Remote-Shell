@@ -21,22 +21,24 @@ namespace fs = filesystem;
 #define BUFFER_SIZE 4096
 #define MAX_EVENTS 20
 
+// 0 -> login
+// 1 -> authorized
+// 2 -> logout
 
 
 class User{
     public:
     string username;
     string ip_addr;
+    int state;
     int port;
     int client_sock;
     int ptyMaster;
+    string dir;
     string token;
     string buffer;
 };
 
-// unordered_map<int, shared_ptr<User>> client_to_user;
-// unordered_map<int, shared_ptr<User>> ptyMaster_to_user;
-// auto user = make_shared<User>();
 unordered_map<int, User> client_to_user, ptyMaster_to_user;
 
 
@@ -53,12 +55,12 @@ void cleanup_connection(User user,int epoll_fd) {
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, pty_fd, nullptr);
         close(pty_fd);
     }
-    waitpid(-1, nullptr, WNOHANG);
+    while (waitpid(-1, nullptr, WNOHANG) > 0);
     cout << "[server] cleaned up client_fd=" << client_fd << "\n";
 }
 
 
-int create_pty(string &work_dir) {
+int create_pty(string &work_dir, string &username) {
     int master, slave;
     struct winsize ws;
     ws.ws_col = 80;
@@ -84,8 +86,18 @@ int create_pty(string &work_dir) {
             fs::create_directories(work_dir);
             fs::current_path(work_dir);
         }
-        execlp("/bin/bash", "bash", "--norc", "--noprofile", nullptr);
-        _exit(1);
+
+        setenv("TERM", "xterm-256color", 1);
+        setenv("USER", username.c_str(), 1);
+        setenv("LOGNAME", username.c_str(), 1);
+        
+        
+        string prompt = "PS1='\\[\\033[1;32m\\]" + username + "@virtual-server\\[\\033[00m\\]:\\[\\033[1;34m\\]\\w\\[\\033[00m\\]\\$ '";
+        setenv("PROMPT_COMMAND", prompt.c_str(), 1);
+        
+        execlp("/bin/bash", "bash", "-l", "-i", nullptr);
+        // execlp("/bin/bash", "bash", "--norc", "--noprofile", nullptr);
+        exit(1);
     }
     close(slave);
     set_nonblocking(master);
@@ -106,30 +118,6 @@ string gen_random_key(){
         key += (rand() % 10 + '0');
     }
     return key;
-}
-
-
-bool authorize_user(int client_sock, string key,User &user){
-    char response[BUFFER_SIZE];
-    int n=recv(client_sock,response,BUFFER_SIZE,0);
-    
-    if( n <= 0){
-        return false;
-    }
-    string res(response,n);
-    auto [type, payload] = decode_message(res);
-    if(type == 0){
-        auto [private_key,username] = decode_login(payload);
-        if(key != private_key){
-            return false;
-        }
-        user.username = username;
-        user.token = gen_random_token();
-        string message = message_of_ack(user.token);
-        send(client_sock,message.c_str(),message.size(),0);
-        return true;
-    }
-    return false;
 }
 
 pair<int,string> get_ip_and_port(int client_sock){
@@ -193,27 +181,16 @@ int main(){
                     exit(1);
                 }
                 User user;
-                bool is_authorized = authorize_user(client_sock,private_key,user);
-                if(!is_authorized){
-                    close(client_sock);
-                    continue;
-                }
                 user.client_sock = client_sock;
+                user.state = 0;
                 auto [port , ip] = get_ip_and_port(client_sock);
                 user.ip_addr = ip;
                 user.port = port;
-                string dir = ip + "_" + user.username;
-                int ptyMaster = create_pty(dir);
-                user.ptyMaster = ptyMaster;
                 client_to_user[client_sock] = user;
-                ptyMaster_to_user[ptyMaster] = user;
-
                 add_sock_to_epoll(epoll_fd, client_sock);
-                add_sock_to_epoll(epoll_fd, ptyMaster);
 
             }else if(client_to_user.find(socket_fd) != client_to_user.end()){
                 User &user = client_to_user[socket_fd];
-                int ptyMaster = user.ptyMaster;
                 char response[BUFFER_SIZE];
                 int n = recv(socket_fd,response,BUFFER_SIZE,0);
                 if(n <= 0){
@@ -221,28 +198,76 @@ int main(){
                     continue;
                 }
                 user.buffer.append(response,n);
-
                 while(check_decode_message(user.buffer)){
                     auto [type , payload] = decode_message(user.buffer);
-                    if(type == 1){
+                    if(type == 0){
+                        auto [user_shared_key,username] = decode_login(payload);
+                        if(user_shared_key != private_key){
+                            string message = message_of_error("invalid key");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                            continue;
+                        }
+                        user.username = username;
+                        user.dir = user.ip_addr + "_" + username;
+                        user.token = gen_random_token();
+                        user.state = 1;
+                        int ptyMaster = create_pty(user.dir,user.username);
+                        user.ptyMaster = ptyMaster;
+                        ptyMaster_to_user[ptyMaster] = user;
+
+                        add_sock_to_epoll(epoll_fd, ptyMaster);
+
+                        string message = message_of_ack(user.token);
+                        send(socket_fd,message.c_str(),message.size(),0);
+                    }else if(type == 1){
                         cleanup_connection(user,epoll_fd);
                     }else if(type == 2){
+                        if(user.state != 1){
+                            string message = message_of_error("Not authorized");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                            continue;
+                        }
                         auto [token,data] = decode_data(payload);
                         if(user.token != token){
                             string message = message_of_error("invalid token");
                             send(socket_fd,message.c_str(),message.size(),0);
                             continue;
                         }
+                        int ptyMaster = user.ptyMaster;
                         ssize_t wr_data = 0;
                         while(wr_data < data.size()) {
                             int w = write(ptyMaster, data.c_str() + wr_data, data.size() - wr_data);
                             if (w <= 0) break; 
                             wr_data += w;
                         }
-                    }else continue;
+                    }else if(type == 3){
+                        if(user.state != 1){
+                            string message = message_of_error("Not authorized");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                            continue;
+                        }
+                        
+                        auto [token,ws] = decode_window_size(payload);
+                        if(user.token != token){
+                            string message = message_of_error("invalid token");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                            continue;
+                        }
+                        struct winsize window_size;
+                        window_size.ws_row = ws.height;
+                        window_size.ws_col = ws.width;
+                        window_size.ws_xpixel = 0;
+                        window_size.ws_ypixel = 0;
+                        int ptyMaster = user.ptyMaster;
+                        int w = ioctl(ptyMaster, TIOCSWINSZ, &window_size);
+                        if(w < 0){
+                            string message = message_of_error("failed to set window size");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                        }
+                    }
                 }
             }else if(ptyMaster_to_user.find(socket_fd) != ptyMaster_to_user.end()){
-                User &user = ptyMaster_to_user[socket_fd];
+                User user = ptyMaster_to_user[socket_fd];
                 char response[BUFFER_SIZE];
                 int n = read(socket_fd,response,BUFFER_SIZE);
                 if(n <= 0){

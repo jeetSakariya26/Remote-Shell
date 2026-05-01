@@ -107,6 +107,38 @@ string decode_error(string& message){
     return error;
 }
 
+// window size packet
+string message_of_window_size(string token, unsigned short width, unsigned short height){
+    string payload;
+    payload.push_back((char)token.size());
+    payload += token;
+    string pkt_data(4,'\0');
+    uint16_t w = htons(width);
+    uint16_t h = htons(height);
+    memcpy(&pkt_data[0], &w, 2);
+    memcpy(&pkt_data[2], &h, 2);
+    payload += pkt_data;
+    return make_message(3,payload);
+}
+
+pair<string,WindowSize> decode_window_size(string& message){
+    uint8_t token_len = (uint8_t)message[0];
+    string token = message.substr(1, token_len);
+    string pkt_data = message.substr(1 + token_len);
+    WindowSize ws;
+    uint16_t w;
+    uint16_t h;
+    uint16_t x_p;
+    uint16_t y_p;
+    memcpy(&w, pkt_data.data(), 2);
+    ws.width = ntohs(w);
+    memcpy(&h, pkt_data.data() + 2, 2);
+    ws.height = ntohs(h);
+    message.erase(0, 5+token_len);
+    return {token,ws};
+}
+
+
 // decode one message
 
 bool check_decode_message(string& message){
