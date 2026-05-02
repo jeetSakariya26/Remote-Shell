@@ -1,13 +1,11 @@
-#include <iostream>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/epoll.h>
-#include <cstring>
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <termios.h>
-#include <string>
+#include <bits/stdc++.h>
 #include "packet.h"
 using namespace std;
 
