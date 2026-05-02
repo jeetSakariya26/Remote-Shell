@@ -43,18 +43,23 @@ pair<string,string> decode_login(string& message){
 
 
 // logout packet
-string message_of_logout(string reason){
+string message_of_logout(string reason,string token){
     string payload;
+    payload.push_back((char)token.size());
+    payload += token;
     payload.push_back((char)reason.size());
     payload += reason;
     return make_message(1,payload);
 }
 
-string decode_logout(string& message){
+pair<string,string> decode_logout(string& message){
+    uint8_t token_len = (uint8_t)message[0];
+    string token = message.substr(1, token_len);
+    message.erase(0, 1 + token_len);
     uint8_t reason_len = (uint8_t)message[0];
     string reason = message.substr(1, reason_len);
     message.erase(0, 1 + reason_len);
-    return reason;
+    return {token,reason};
 }
 
 // data packet

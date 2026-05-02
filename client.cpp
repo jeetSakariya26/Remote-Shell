@@ -28,7 +28,7 @@ bool send_windowSize(int sock,string token){
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         perror("ioctl failed");
-        string message = message_of_logout("user wants to logout");
+        string message = message_of_logout("user wants to logout",token);
         send_All(sock,message);
         return false;
     }
@@ -180,7 +180,7 @@ int main(){
                 if(n <= 0) continue;
                 for(int i=0;i<n;i++){
                     if(input[i] == 0x11){
-                        string message = message_of_logout("user wants to logout");
+                        string message = message_of_logout("user wants to logout",token);
                         send_All(sock,message);
                         cout<<"\r\n\033[0m[client] disconnected\r\n";
                         // write(STDOUT_FILENO, "\033[?1049l", 8);

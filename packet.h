@@ -37,8 +37,8 @@ pair<string,string> decode_login(string& message);
 // logout packet
 // type 1
 // [1 byte reason length] [reason]
-string message_of_logout(string reason);
-string decode_logout(string& message);
+string message_of_logout(string reason,string token);
+pair<string,string> decode_logout(string& message);
 
 // data packet
 // type 2

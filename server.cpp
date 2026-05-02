@@ -1,16 +1,11 @@
-#include <iostream>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pty.h>
 #include <sys/epoll.h>
-#include <unordered_map>
-#include <cstring>
 #include <fcntl.h>
 #include <sys/wait.h>
-#include <filesystem>
 #include <arpa/inet.h>
-#include <string>
 #include "helper.h"
 #include "packet.h"
 #include <bits/stdc++.h>
@@ -20,7 +15,11 @@ namespace fs = filesystem;
 #define PORT 9090
 #define BUFFER_SIZE 4096
 #define MAX_EVENTS 20
+#define KEY_LEN 6 // max 256 key len possible
+#define TOKEN_LEN 6 // max 256 token len possible
 
+
+// state in user
 // 0 -> login
 // 1 -> authorized
 // 2 -> logout
@@ -40,6 +39,7 @@ class User{
 };
 
 unordered_map<int, User> client_to_user, ptyMaster_to_user;
+
 
 
 void cleanup_connection(User user,int epoll_fd) {
@@ -86,17 +86,7 @@ int create_pty(string &work_dir, string &username) {
             fs::create_directories(work_dir);
             fs::current_path(work_dir);
         }
-
-        setenv("TERM", "xterm-256color", 1);
-        setenv("USER", username.c_str(), 1);
-        setenv("LOGNAME", username.c_str(), 1);
-        
-        
-        string prompt = "PS1='\\[\\033[1;32m\\]" + username + "@virtual-server\\[\\033[00m\\]:\\[\\033[1;34m\\]\\w\\[\\033[00m\\]\\$ '";
-        setenv("PROMPT_COMMAND", prompt.c_str(), 1);
-        
-        execlp("/bin/bash", "bash", "-l", "-i", nullptr);
-        // execlp("/bin/bash", "bash", "--norc", "--noprofile", nullptr);
+        execlp("/bin/bash", "bash","--norc","--noprofile", nullptr);
         exit(1);
     }
     close(slave);
@@ -105,17 +95,29 @@ int create_pty(string &work_dir, string &username) {
 }
 
 string gen_random_token(){
+    string avaliable_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@!#$%&*?|()[]{}:;<>,./~=+-_";
+
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> distribution(0, avaliable_chars.size() - 1);
+
     string token = "";
-    for(int i=0;i<6;i++){
-        token += rand() % 10 + '0';
+    for(int i=0;i<TOKEN_LEN;i++){
+        token += avaliable_chars[distribution(gen)];
     }
     return token;
 }
 
 string gen_random_key(){
+    string avaliable_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@!#$%&*?|";
+
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> distribution(0, avaliable_chars.size() - 1);
+
     string key = "";
-    for(int i=0;i<6;i++){
-        key += (rand() % 10 + '0');
+    for(int i=0;i<KEY_LEN;i++){
+        key += avaliable_chars[distribution(gen)];
     }
     return key;
 }
@@ -220,6 +222,20 @@ int main(){
                         string message = message_of_ack(user.token);
                         send(socket_fd,message.c_str(),message.size(),0);
                     }else if(type == 1){
+                        if(user.state != 1){
+                            string message = message_of_error("Not authorized");
+                            send(socket_fd,message.c_str(),message.size(),0);
+                            continue;
+                        }else{
+                            auto [token,reason] = decode_logout(payload);
+                            if(user.token != token){
+                                string message = message_of_error("invalid token");
+                                send(socket_fd,message.c_str(),message.size(),0);
+                                continue;
+                            }
+                            string message = message_of_logout(reason,user.token);
+                            send(socket_fd,message.c_str(),message.size(),0);
+                        }
                         cleanup_connection(user,epoll_fd);
                     }else if(type == 2){
                         if(user.state != 1){
@@ -271,7 +287,7 @@ int main(){
                 char response[BUFFER_SIZE];
                 int n = read(socket_fd,response,BUFFER_SIZE);
                 if(n <= 0){
-                    string logout_msg = message_of_logout("remote shell exited");
+                    string logout_msg = message_of_logout("remote shell exited",user.token);
                     send_All(user.client_sock, logout_msg);
                     cleanup_connection(user,epoll_fd);
                     continue;

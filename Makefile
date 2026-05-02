@@ -1,43 +1,22 @@
-# Compiler settings
-CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O2
+all : server client
 
-# Linker flags (Required for openpty)
-LDFLAGS = -lutil
+server : server.out helper.out packet.out
+	g++ -std=c++17 -o server server.cpp packet.cpp helper.cpp -lutil
 
-# Executable names
-CLIENT_BIN = client
-SERVER_BIN = server
+client : client.out helper.out packet.out
+	g++ -std=c++17 -o client client.cpp packet.cpp helper.cpp -lutil
 
-# Object files needed for each executable
-CLIENT_OBJS = client.o helper.o packet.o
-SERVER_OBJS = server.o helper.o packet.o
+server.out : server.cpp packet.h helper.h
+	g++ -std=c++17 -c server.cpp -o server.out
 
-# Default target to build everything
-.PHONY: all clean
-all: $(CLIENT_BIN) $(SERVER_BIN)
+client.out : client.cpp packet.h helper.h
+	g++ -std=c++17 -c client.cpp -o client.out
 
-# Build the client executable
-$(CLIENT_BIN): $(CLIENT_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+helper.out : helper.cpp helper.h
+	g++ -std=c++17 -c helper.cpp -o helper.out
 
-# Build the server executable (linking -lutil)
-$(SERVER_BIN): $(SERVER_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+packet.out : packet.cpp packet.h
+	g++ -std=c++17 -c packet.cpp -o packet.out
 
-# Compile object files with header dependencies
-client.o: client.cpp helper.h packet.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-server.o: server.cpp helper.h packet.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-helper.o: helper.cpp helper.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-packet.o: packet.cpp packet.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-# Clean up build artifacts
-clean:
-	rm -f *.o $(CLIENT_BIN) $(SERVER_BIN)
+clean :
+	rm -f server.out client.out helper.out packet.out server client
